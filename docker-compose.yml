@@ -1,0 +1,78 @@
+# CirrhosisRegistry — single-command deployment with dev/prod parity.
+#
+#   docker compose up --build
+#
+# All three services (Redis, Flask web, RQ worker) run in Linux containers on
+# every host OS, so the Windows-only SimpleWorker fallback in worker.py never
+# runs under Compose — Windows dev and Linux prod exercise the identical
+# forking rq.Worker code path.
+#
+# LLM options:
+#   a) Ollama on the HOST (default): LLM_BASE_URL resolves to
+#      host.docker.internal (mapped to the host gateway on Linux too).
+#   b) Ollama in a CONTAINER:  docker compose --profile llm up --build
+#      and set LLM_BASE_URL=http://ollama:11434 in .env or the shell.
+#
+# Patient data stays in the bind-mounted ./data directory on the host —
+# nothing leaves the machine.
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  web:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:11434}
+      FLASK_ENV: ${FLASK_ENV:-production}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker:
+    build: .
+    restart: unless-stopped
+    command: ["python", "worker.py"]
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:11434}
+      FLASK_ENV: ${FLASK_ENV:-production}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # Optional containerised Ollama — enable with:  --profile llm
+  # Remember to pull the model once:
+  #   docker compose exec ollama ollama pull qwen2.5:7b-instruct-q4_K_M
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["llm"]
+    restart: unless-stopped
+    volumes:
+      - ollama-data:/root/.ollama
+
+volumes:
+  redis-data:
+  ollama-data:

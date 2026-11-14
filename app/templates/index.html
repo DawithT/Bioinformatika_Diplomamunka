@@ -1,0 +1,1385 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CirrhosisRegistry — Dokumentum feldolgozás</title>
+
+  <!-- Dropzone.js — served locally (app/static/vendor) so the UI works
+       offline / on air-gapped hospital networks, identically on Linux and
+       Windows. The previous CDN <link>/<script> tags carried invalid SRI
+       integrity hashes, so browsers refused to load them and the upload UI
+       was dead ("Dropzone is not defined"). -->
+  <link rel="stylesheet"
+        href="{{ url_for('static', filename='vendor/dropzone.min.css') }}">
+
+  <style>
+    /* ── Design tokens ────────────────────────────────────────────── */
+    :root {
+      --bg:          #0d1117;
+      --surface:     #161b22;
+      --surface-2:   #1c2330;
+      --border:      #30363d;
+      --border-accent: #3d8bcd44;
+      --accent:      #3d8bcd;
+      --accent-hi:   #58a6ff;
+      --accent-glow: #3d8bcd30;
+      --text:        #e6edf3;
+      --text-dim:    #8b949e;
+      --success:     #3fb950;
+      --warn:        #d29922;
+      --danger:      #f85149;
+      --radius:      10px;
+      --radius-lg:   16px;
+      --font-mono:   'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+      --font-ui:     'DM Sans', 'Segoe UI', system-ui, sans-serif;
+    }
+
+    /* ── Base ─────────────────────────────────────────────────────── */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--font-ui);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    /* Subtle grid background */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(var(--border) 1px, transparent 1px),
+        linear-gradient(90deg, var(--border) 1px, transparent 1px);
+      background-size: 40px 40px;
+      opacity: 0.15;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ── Header ───────────────────────────────────────────────────── */
+    header {
+      position: relative;
+      z-index: 1;
+      padding: 28px 40px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      background: var(--surface);
+      backdrop-filter: blur(10px);
+    }
+
+    .header-icon {
+      width: 40px; height: 40px;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      /* No tile behind it: the liver carries its own colours, and a gradient
+         swatch underneath flattened the organ into an unreadable blob. */
+      filter: drop-shadow(0 2px 6px #00000066);
+    }
+
+    header h1 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      letter-spacing: -.01em;
+      color: var(--text);
+    }
+
+    header p {
+      font-size: 0.78rem;
+      color: var(--text-dim);
+      margin-top: 1px;
+    }
+
+    .header-badge {
+      margin-left: auto;
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      color: var(--accent);
+      background: var(--accent-glow);
+      border: 1px solid var(--border-accent);
+      padding: 3px 10px;
+      border-radius: 20px;
+    }
+
+    /* ── Main layout ──────────────────────────────────────────────── */
+    main {
+      position: relative;
+      z-index: 1;
+      flex: 1;
+      max-width: 900px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 36px 24px 60px;
+    }
+
+    /* ── Section headings ─────────────────────────────────────────── */
+    .section-label {
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+    }
+
+    /* ── Drop zone ────────────────────────────────────────────────── */
+    #dz-upload {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+      padding: 48px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s, box-shadow .2s;
+      margin-bottom: 32px;
+    }
+
+    #dz-upload:hover,
+    #dz-upload.dz-drag-hover {
+      border-color: var(--accent);
+      background: var(--surface-2);
+      box-shadow: 0 0 0 4px var(--accent-glow), inset 0 0 40px var(--accent-glow);
+    }
+
+    #dz-upload .dz-message {
+      margin: 0;
+    }
+
+    .dz-icon {
+      font-size: 2.8rem;
+      margin-bottom: 14px;
+      display: block;
+      opacity: .6;
+    }
+
+    .dz-main-text {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 6px;
+    }
+
+    .dz-sub-text {
+      font-size: 0.8rem;
+      color: var(--text-dim);
+    }
+
+    .dz-sub-text span {
+      font-family: var(--font-mono);
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-size: 0.73rem;
+      color: var(--accent-hi);
+    }
+
+    /* Dropzone file previews */
+    #dz-upload .dz-preview {
+      display: none !important; /* we show our own file list */
+    }
+
+    /* ── File list ────────────────────────────────────────────────── */
+    #file-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 20px;
+    }
+
+    .file-chip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 5px 10px;
+      font-size: 0.78rem;
+      font-family: var(--font-mono);
+      color: var(--text-dim);
+      animation: chip-in .18s ease;
+    }
+
+    @keyframes chip-in {
+      from { opacity: 0; transform: translateY(4px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .file-chip .chip-ext {
+      font-size: 0.65rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      padding: 1px 5px;
+      border-radius: 3px;
+      background: var(--accent-glow);
+      color: var(--accent-hi);
+      border: 1px solid var(--border-accent);
+    }
+
+    .file-chip .chip-remove {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      padding: 0;
+      line-height: 1;
+      font-size: 0.9rem;
+      opacity: .6;
+      transition: opacity .15s;
+    }
+    .file-chip .chip-remove:hover { opacity: 1; color: var(--danger); }
+
+    /* ── Process button ───────────────────────────────────────────── */
+    #btn-process {
+      width: 100%;
+      padding: 13px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      letter-spacing: .02em;
+      background: linear-gradient(135deg, var(--accent), #2d6fa8);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: opacity .2s, transform .15s, box-shadow .2s;
+      box-shadow: 0 4px 16px var(--accent-glow);
+    }
+
+    #btn-process:hover:not(:disabled) {
+      opacity: .9;
+      transform: translateY(-1px);
+      box-shadow: 0 6px 24px var(--accent-glow);
+    }
+
+    #btn-process:disabled {
+      opacity: .35;
+      cursor: not-allowed;
+    }
+
+    /* ── Destination picker ───────────────────────────────────────── */
+    .dest-row {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    #dest-dir {
+      flex: 1;
+      min-width: 0;
+      padding: 11px 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+    }
+
+    #dest-dir:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+
+    #btn-browse {
+      padding: 11px 18px;
+      background: var(--surface-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background .15s, border-color .15s;
+    }
+
+    #btn-browse:hover:not(:disabled) {
+      background: #232b38;
+      border-color: var(--accent);
+    }
+
+    #btn-browse:disabled { opacity: .5; cursor: not-allowed; }
+
+    .dest-opt {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.8rem;
+      color: var(--text-dim);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .dest-opt input {
+      width: 15px;
+      height: 15px;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    .dest-hint {
+      margin-top: 8px;
+      font-size: 0.75rem;
+      color: var(--warn);
+      word-break: break-all;
+    }
+
+    /* ── Run options and configuration panel ──────────────────────── */
+    .run-opt { display: flex; width: fit-content; margin-top: 8px; }
+    .run-opt input:disabled { cursor: not-allowed; }
+
+    #opt-csv {
+      padding: 4px 8px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-size: 0.78rem;
+    }
+
+    .worker-warn {
+      margin-bottom: 16px;
+      padding: 10px 14px;
+      border: 1px solid var(--warn);
+      border-radius: 6px;
+      font-size: 0.85rem;
+      color: var(--warn);
+    }
+
+    .cfg-note {
+      margin-top: 6px;
+      font-size: 0.75rem;
+      color: var(--text-dim);
+    }
+
+    #cfg-panel {
+      margin-top: 18px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+
+    #cfg-panel summary {
+      padding: 10px 14px;
+      cursor: pointer;
+      font-size: 0.78rem;
+      color: var(--text-dim);
+    }
+
+    #cfg-panel summary strong { color: var(--text); font-weight: 600; }
+
+    .cfg-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.75rem;
+    }
+
+    .cfg-table th,
+    .cfg-table td {
+      padding: 6px 14px;
+      border-top: 1px solid var(--border);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .cfg-table th { color: var(--text-dim); font-weight: 500; width: 45%; }
+
+    .cfg-table td {
+      font-family: var(--font-mono);
+      color: var(--text);
+      word-break: break-all;
+    }
+
+    .cfg-foot {
+      padding: 8px 14px 12px;
+      font-size: 0.72rem;
+      color: var(--text-dim);
+      border-top: 1px solid var(--border);
+    }
+
+    /* ── Jobs section ─────────────────────────────────────────────── */
+    #jobs-section { margin-top: 48px; }
+
+    /* ── Job card ─────────────────────────────────────────────────── */
+    .job-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 20px 24px;
+      margin-bottom: 14px;
+      animation: card-in .22s ease;
+    }
+
+    @keyframes card-in {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .job-card.is-done   { border-color: #3fb95044; }
+    .job-card.is-failed { border-color: #f8514944; }
+
+    .job-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .job-ids { flex: 1; min-width: 0; }
+
+    .job-case {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .job-id-mono {
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      color: var(--text-dim);
+      margin-top: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Status badge */
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      padding: 4px 10px;
+      border-radius: 20px;
+      flex-shrink: 0;
+    }
+
+    .status-badge.queued     { background:#30363d; color:#8b949e; }
+    .status-badge.ingesting,
+    .status-badge.routing,
+    .status-badge.anchoring,
+    .status-badge.extracting,
+    .status-badge.merging,
+    .status-badge.exporting  { background:#1c3a5a; color:#58a6ff; }
+    .status-badge.done       { background:#1a3a25; color:#3fb950; }
+    .status-badge.failed     { background:#3a1a1a; color:#f85149; }
+    .status-badge.unknown    { background:#2a2a2a; color:#666; }
+
+    .badge-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    /* Pulse for in-progress states */
+    .status-badge.ingesting .badge-dot,
+    .status-badge.routing .badge-dot,
+    .status-badge.anchoring .badge-dot,
+    .status-badge.extracting .badge-dot,
+    .status-badge.merging .badge-dot,
+    .status-badge.exporting .badge-dot {
+      animation: pulse-dot 1.4s ease-in-out infinite;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: .4; transform: scale(.7); }
+    }
+
+    /* Progress bar */
+    .progress-wrap {
+      height: 4px;
+      background: var(--surface-2);
+      border-radius: 2px;
+      overflow: hidden;
+      margin-bottom: 10px;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), var(--accent-hi));
+      border-radius: 2px;
+      transition: width .5s cubic-bezier(.4,0,.2,1);
+    }
+
+    .progress-fill.done-fill {
+      background: linear-gradient(90deg, var(--success), #52d68a);
+    }
+
+    .progress-fill.error-fill {
+      background: var(--danger);
+    }
+
+    /* Step label */
+    .step-label {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+      margin-bottom: 14px;
+      min-height: 1em;
+    }
+
+    /* Error box */
+    .error-box {
+      background: #200e0e;
+      border: 1px solid #5a1e1e;
+      border-radius: var(--radius);
+      padding: 10px 14px;
+      font-size: 0.78rem;
+      color: var(--danger);
+      font-family: var(--font-mono);
+      word-break: break-all;
+      margin-bottom: 10px;
+    }
+
+    /* Result location — shown instead of a download link */
+    .result-box {
+      background: #12291b;
+      border: 1px solid #3fb95033;
+      border-radius: var(--radius);
+      padding: 12px 14px;
+    }
+
+    .result-label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: var(--success);
+      margin-bottom: 8px;
+    }
+
+    .result-path {
+      display: block;
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--text);
+      word-break: break-all;
+    }
+
+    .result-zip {
+      margin-top: 6px;
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      word-break: break-all;
+    }
+
+    .result-zip.warn { color: var(--warn); }
+
+    .btn-copy-path {
+      margin-top: 10px;
+      padding: 6px 14px;
+      background: #1a3a25;
+      color: var(--success);
+      border: 1px solid #3fb95044;
+      border-radius: var(--radius);
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .15s;
+    }
+
+    .btn-copy-path:hover { background: #1f4a2e; }
+
+    /* ── Empty state ──────────────────────────────────────────────── */
+    #empty-state {
+      text-align: center;
+      padding: 40px 0;
+      color: var(--text-dim);
+      font-size: 0.82rem;
+    }
+
+    #empty-state svg { opacity: .25; margin-bottom: 12px; }
+
+    /* ── Footer ───────────────────────────────────────────────────── */
+    footer {
+      position: relative;
+      z-index: 1;
+      padding: 18px 40px;
+      border-top: 1px solid var(--border);
+      font-size: 0.72rem;
+      color: var(--text-dim);
+      text-align: center;
+    }
+
+    /* ── Password modal ───────────────────────────────────────────── */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(4px);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-overlay.visible { display: flex; }
+
+    .modal-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 28px 32px;
+      width: 100%;
+      max-width: 420px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    }
+
+    .modal-card h3 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .modal-card .modal-desc {
+      font-size: 0.82rem;
+      color: var(--text-dim);
+      margin-bottom: 16px;
+      line-height: 1.5;
+    }
+
+    .modal-card input[type="password"] {
+      width: 100%;
+      padding: 10px 14px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .modal-card input[type="password"]:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-glow);
+    }
+
+    .modal-error {
+      color: var(--danger);
+      font-size: 0.8rem;
+      margin-top: 8px;
+      min-height: 1.2em;
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 18px;
+      justify-content: flex-end;
+    }
+
+    .modal-actions button {
+      padding: 8px 20px;
+      border-radius: var(--radius);
+      font-size: 0.85rem;
+      font-family: var(--font-ui);
+      cursor: pointer;
+      border: 1px solid var(--border);
+      transition: all 0.15s;
+    }
+
+    .btn-modal-cancel {
+      background: transparent;
+      color: var(--text-dim);
+    }
+    .btn-modal-cancel:hover { color: var(--text); }
+
+    .btn-modal-submit {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    .btn-modal-submit:hover { background: var(--accent-hi); }
+    .btn-modal-submit:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* ── Scrollbar ────────────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────────────────────── -->
+<header>
+  <div class="header-icon">
+    <!-- Unicode has no liver emoji (it has heart, lungs and brain but no
+         liver), so the organ is drawn: right lobe, falciform notch with the
+         vena cava and portal vein rising out of it, tapering left lobe, and
+         the gallbladder. Do not put an organ emoji in this comment — a test
+         asserts the anatomical-heart character appears nowhere on the page. -->
+    <svg viewBox="0 0 64 64" width="40" height="40" role="img" aria-label="Máj">
+      <title>Máj</title>
+      <defs>
+        <linearGradient id="liverGrad" x1="0.25" y1="0" x2="0.55" y2="1">
+          <stop offset="0" stop-color="#b85e3f"/>
+          <stop offset="0.55" stop-color="#8d3a24"/>
+          <stop offset="1" stop-color="#682415"/>
+        </linearGradient>
+      </defs>
+
+      <path d="M38.5 7.5 V19" stroke="#31409a" stroke-width="5" stroke-linecap="round" fill="none"/>
+      <path d="M44 6.5 V17.5" stroke="#c53c2d" stroke-width="4.6" stroke-linecap="round" fill="none"/>
+
+      <ellipse cx="25" cy="38.5" rx="4.6" ry="5.8"
+               transform="rotate(-24 25 38.5)" fill="#1d8c77"/>
+
+      <path d="M3 28C3 17.6 10.6 8.8 19.6 8.2c6.4-.4 11.4 2.4 13.8 7.4l1.2 4.2
+               c1.4-3.8 4-6.6 7.4-8C48 9.6 55.4 10.4 59 13.4c3 2.6 3.4 6.2 1 9.4
+               -3.4 4.6-11.6 9.8-20.4 13.6-7 3-14 4.6-19 4.4C12.6 40.5 6 36 4 29.6
+               3.3 28.5 3 28.6 3 28Z"
+            fill="url(#liverGrad)"/>
+
+      <path d="M34.6 20.2c-.8 4-1.8 7.2-2.8 9.8" stroke="#e2bdad" stroke-width="2"
+            stroke-linecap="round" fill="none" opacity=".65"/>
+
+      <g stroke="#4f1d0f" stroke-width="1.5" stroke-linecap="round" fill="none" opacity=".3">
+        <path d="M24 17c-3.2 2.4-5.2 5.6-6.4 9.4"/>
+        <path d="M17.6 26.4c-2.8 0-5.4 1-7.6 2.8"/>
+        <path d="M17.6 26.4c.8 2.8.8 5.6 0 8.2"/>
+      </g>
+    </svg>
+  </div>
+  <div>
+    <h1>CirrhosisRegistry</h1>
+    <p>Dokumentum feldolgozó rendszer</p>
+  </div>
+  <span class="header-badge">v0.14</span>
+</header>
+
+<!-- ── Main ────────────────────────────────────────────────────────────── -->
+<main>
+
+  <!-- RQ worker missing or running outdated code (app/services/code_version.py).
+       Checked when the page loads; reload the page after restarting. -->
+  {% for problem in worker_problems %}
+  <div class="worker-warn">⚠ {{ problem }}</div>
+  {% endfor %}
+
+  <!-- Upload section -->
+  <p class="section-label">Dokumentumok feltöltése</p>
+
+  <div id="dz-upload" class="dropzone">
+    <div class="dz-message">
+      <span class="dz-icon">📂</span>
+      <div class="dz-main-text">Húzza ide a fájlokat, vagy kattintson a tallózáshoz</div>
+      <div class="dz-sub-text">
+        Elfogadott formátumok: <span>.pdf</span> &nbsp;<span>.zip</span> &nbsp;<span>.docx</span>
+        &nbsp;·&nbsp; Max 200 MB / feldolgozás
+      </div>
+    </div>
+  </div>
+
+  <!-- Queued file chips -->
+  <div id="file-list"></div>
+
+  <!-- Result destination -->
+  <p class="section-label" style="margin-top:28px;">Eredmények mentési helye</p>
+
+  <div class="dest-row">
+    <input type="text" id="dest-dir" spellcheck="false" autocomplete="off"
+           value="{{ default_dest }}" placeholder="A célmappa teljes útvonala">
+    <button type="button" id="btn-browse">Tallózás…</button>
+  </div>
+
+  <label class="dest-opt">
+    <input type="checkbox" id="opt-zip">
+    ZIP archívum is készüljön a mappába
+  </label>
+
+  <div class="dest-hint" id="dest-hint"></div>
+
+  <!-- Per-run LLM switch: it can only turn the LLM off; whether the server
+       allows it at all is decided in .env. Deliberately not remembered in
+       localStorage, so a forgotten "off" cannot silently carry over. -->
+  <label class="dest-opt run-opt">
+    <input type="checkbox" id="opt-llm"
+           {% if run_config.llm.enabled %}checked{% else %}disabled{% endif %}>
+    LLM használata ennél a feldolgozásnál
+  </label>
+  {% if not run_config.llm.enabled %}
+  <div class="cfg-note">Az LLM a szerver beállításaiban (.env) ki van kapcsolva.</div>
+  {% endif %}
+
+  <!-- Layout of wide_table.csv. The xlsx files are the same either way. -->
+  <label class="dest-opt run-opt">
+    CSV formátum:
+    <select id="opt-csv">
+      <option value="intl">nemzetközi — vessző, tizedespont (R, STATA, SPSS)</option>
+      <option value="hu">magyar Excel — pontosvessző, tizedesvessző</option>
+    </select>
+  </label>
+
+  <!-- Read-only system configuration -->
+  {% set llm = run_config.llm %}
+  <details id="cfg-panel">
+    <summary>
+      Rendszerbeállítások &nbsp;·&nbsp;
+      LLM: <strong>{{ 'bekapcsolva' if llm.enabled else 'kikapcsolva' }}</strong>
+      {% if llm.enabled %}({{ llm.model }}){% endif %}
+      &nbsp;·&nbsp;
+      gyorsítótár: <strong>{{ 'feladatonként' if run_config.cache.enabled else 'kikapcsolva' }}</strong>
+    </summary>
+    <table class="cfg-table">
+      <tr><th>LLM</th><td>{{ 'Bekapcsolva' if llm.enabled else 'Kikapcsolva' }}</td></tr>
+      {% if llm.enabled %}
+      <tr><th>Szolgáltató / modell</th><td>{{ llm.provider }} / {{ llm.model }}</td></tr>
+      <tr><th>Szerver</th><td>{{ llm.base_url }}</td></tr>
+      <tr><th>Hőmérséklet (temperature)</th><td>{{ llm.temperature }}</td></tr>
+      <tr><th>Max. válaszhossz</th><td>{{ llm.max_tokens }} token</td></tr>
+      <tr><th>Gondolkodási szint (reasoning effort)</th><td>{{ llm.reasoning_effort }}</td></tr>
+      <tr><th>Újrapróbálkozás hibás válasznál</th><td>{{ llm.max_retries }}</td></tr>
+      <tr><th>Szövegkeret promptonként</th><td>{{ llm.context_chars }} karakter</td></tr>
+      <tr><th>Időkorlát hívásonként</th><td>{{ llm.timeout_s }} s</td></tr>
+      <tr><th>Promptok ujjlenyomata</th><td>{{ llm.prompts_sha256[:12] }}</td></tr>
+      {% endif %}
+      <tr><th>Gyorsítótár</th><td>{{ 'Be — csak az adott feladat idejére, memóriában' if run_config.cache.enabled else 'Ki' }}</td></tr>
+      <tr><th>Regiszter</th><td>{{ run_config.registry.file }}
+        ({{ run_config.registry.sha256[:12] if run_config.registry.sha256 else 'nem olvasható' }})</td></tr>
+    </table>
+    <div class="cfg-foot">
+      A beállítások a szerver .env fájljában módosíthatók. Minden eredménymappába
+      a futás tényleges beállításai is bekerülnek (&lt;eset&gt;_run_config.json).
+    </div>
+  </details>
+
+  <!-- Process button -->
+  <button id="btn-process" disabled style="margin-top:16px;">
+    Feldolgozás indítása →
+  </button>
+
+  <!-- Jobs section -->
+  <div id="jobs-section">
+    <p class="section-label" style="margin-top:40px;">Feldolgozási feladatok</p>
+    <div id="jobs-list">
+      <div id="empty-state">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="1.5">
+          <rect x="3" y="3" width="18" height="18" rx="3"/>
+          <path d="M9 12h6M9 16h4"/>
+          <path d="M9 8h6"/>
+        </svg>
+        <div>Még nincs feldolgozás</div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<!-- ── Password modal ──────────────────────────────────────────────────── -->
+<div id="pw-modal" class="modal-overlay">
+  <div class="modal-card">
+    <h3>&#x1f512; Jelszó szükséges</h3>
+    <p class="modal-desc" id="pw-modal-desc">
+      A feltöltött archívum jelszóval védett. Kérjük adja meg a jelszót a feldolgozáshoz.
+    </p>
+    <input type="password" id="pw-input" placeholder="Archívum jelszó" autocomplete="off">
+    <div class="modal-error" id="pw-error"></div>
+    <div class="modal-actions">
+      <button class="btn-modal-cancel" id="pw-cancel">Mégse</button>
+      <button class="btn-modal-submit" id="pw-submit">Feloldás</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Footer ──────────────────────────────────────────────────────────── -->
+<footer>CirrhosisRegistry &mdash; Debreceni Egyetem &nbsp;·&nbsp; Belső kutatási eszköz</footer>
+
+<!-- ── Scripts ─────────────────────────────────────────────────────────── -->
+<script src="{{ url_for('static', filename='vendor/dropzone.min.js') }}"></script>
+
+<script>
+/* ── Disable Dropzone auto-discover so we can configure it manually ── */
+Dropzone.autoDiscover = false;
+
+/* ── State ────────────────────────────────────────────────────────── */
+// One case routinely runs to 25+ documents. This single constant feeds both
+// maxFiles and parallelUploads on purpose: with uploadMultiple, Dropzone only
+// sends the first `parallelUploads` queued files per request, so a smaller
+// parallelUploads would split one case across two POSTs (two different
+// case_ids) or — once successmultiple clears the queue — drop the remainder
+// silently. They must never diverge.
+const MAX_FILES_PER_CASE = 100;
+
+const pendingFiles = [];           // File objects queued for upload
+const activeJobs   = new Map();    // job_id → {card, pollTimer}
+let   rejectedMsgs = [];           // batched so N bad files ≠ N alert() boxes
+
+/* ── Destination folder ───────────────────────────────────────────── */
+// A browser cannot give a page a real folder path (the File System Access API
+// is Chromium-only and hands back a handle, not a path), and it is the server
+// that writes the files anyway — so the path is plain text, and 'Tallózás'
+// asks the server to open a native dialog on its own desktop.
+const DEST_KEY = 'crreg_dest';
+const ZIP_KEY  = 'crreg_zip';
+const CSV_KEY  = 'crreg_csv';
+
+const destInput = document.getElementById('dest-dir');
+const zipToggle = document.getElementById('opt-zip');
+const llmToggle = document.getElementById('opt-llm');
+const csvSelect = document.getElementById('opt-csv');
+const destHint  = document.getElementById('dest-hint');
+
+(function restoreDest() {
+  try {
+    const saved = localStorage.getItem(DEST_KEY);
+    if (saved) destInput.value = saved;
+    zipToggle.checked = localStorage.getItem(ZIP_KEY) === '1';
+    if (localStorage.getItem(CSV_KEY) === 'hu') csvSelect.value = 'hu';
+  } catch {}
+})();
+
+function rememberDest() {
+  try {
+    localStorage.setItem(DEST_KEY, destInput.value.trim());
+    localStorage.setItem(ZIP_KEY, zipToggle.checked ? '1' : '0');
+    localStorage.setItem(CSV_KEY, csvSelect.value);
+  } catch {}
+}
+
+function destValue() { return destInput.value.trim(); }
+function setHint(msg) { destHint.textContent = msg || ''; }
+
+destInput.addEventListener('change', rememberDest);
+zipToggle.addEventListener('change', rememberDest);
+csvSelect.addEventListener('change', rememberDest);
+
+document.getElementById('btn-browse').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-browse');
+  btn.disabled = true;
+  setHint('');
+  try {
+    const resp = await fetch('/browse-folder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ current: destValue() }),
+    });
+    const data = await resp.json();
+    if (resp.ok) {
+      if (data.path) { destInput.value = data.path; rememberDest(); }
+    } else {
+      setHint(data.error || 'A mappaválasztó nem érhető el.');
+    }
+  } catch {
+    setHint('A mappaválasztó nem érhető el. Írja be az útvonalat kézzel.');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+/* ── Dropzone init ────────────────────────────────────────────────── */
+const dz = new Dropzone('#dz-upload', {
+  url: '/upload',
+  autoProcessQueue: false,         // we control when to submit
+  uploadMultiple: true,
+  parallelUploads: MAX_FILES_PER_CASE,
+  maxFiles: MAX_FILES_PER_CASE,
+  acceptedFiles: '.pdf,.zip,.docx',
+  // Function form, not the plain string 'files': with uploadMultiple on,
+  // Dropzone turns a string paramName into 'files[0]', 'files[1]', ... which
+  // the server's request.files.getlist('files') does not see.
+  paramName: () => 'files',
+  createImageThumbnails: false,
+  previewsContainer: false,        // suppress built-in previews
+  clickable: true,
+
+  init() {
+    // The chosen destination rides along with the upload. The server validates
+    // it before saving a single byte, so a bad path costs nothing but a retry.
+    this.on('sendingmultiple', (files, xhr, formData) => {
+      formData.append('dest_dir', destValue());
+      formData.append('make_zip', zipToggle.checked ? 'true' : 'false');
+      formData.append('use_llm', llmToggle.checked ? 'true' : 'false');
+      formData.append('csv_format', csvSelect.value);
+    });
+
+    this.on('addedfile', file => {
+      pendingFiles.push(file);
+      renderFileChip(file);
+      updateButton();
+    });
+
+    this.on('removedfile', file => {
+      const idx = pendingFiles.indexOf(file);
+      if (idx !== -1) pendingFiles.splice(idx, 1);
+      updateButton();
+    });
+
+    this.on('successmultiple', (files, response) => {
+      const data = typeof response === 'string' ? JSON.parse(response) : response;
+
+      // Encrypted ZIP detected — show password prompt instead of job card
+      if (data.status === 'password_required') {
+        showPasswordModal(data.case_id, data.protected_files || []);
+        dz.removeAllFiles();
+        pendingFiles.length = 0;
+        renderFileList();
+        updateButton();
+        return;
+      }
+
+      addJobCard(data.job_id, data.case_id);
+      // Clear the queue
+      dz.removeAllFiles();
+      pendingFiles.length = 0;
+      renderFileList();
+      updateButton();
+    });
+
+    // A file Dropzone refuses (wrong type, over maxFiles) still fires
+    // 'addedfile' first, so without this it stays on screen as a chip and the
+    // user believes it was submitted — the case would silently lose documents.
+    this.on('error', (file, msg) => {
+      if (file.accepted !== false) return;   // a real upload failure; see below
+      const idx = pendingFiles.indexOf(file);
+      if (idx !== -1) pendingFiles.splice(idx, 1);
+      removeChip(file.name);
+      rejectedMsgs.push(file.name + ' — ' + asText(msg));
+      scheduleRejectionAlert();
+      updateButton();
+    });
+
+    this.on('errormultiple', (files, msg) => {
+      // Dropzone routes rejections through here too (one call per rejected
+      // file, because uploadMultiple is on). Those are already handled above.
+      if (!files.some(f => f.accepted !== false)) return;
+      // Requeue the failed files so the button stays usable for a retry —
+      // Dropzone leaves them in ERROR state, where processQueue() ignores them.
+      files.forEach(f => { f.status = Dropzone.QUEUED; f.upload.progress = 0;
+                           f.upload.bytesSent = 0; });
+      alert('Feltöltési hiba: ' + asText(msg));
+      updateButton();
+    });
+  }
+});
+
+/* ── File list rendering ──────────────────────────────────────────── */
+function extColor(filename) {
+  const ext = filename.split('.').pop().toLowerCase();
+  return { pdf: '#e55', zip: '#a68', docx: '#59a' }[ext] || '#888';
+}
+
+function renderFileChip(file) {
+  // Built with DOM APIs (not innerHTML) so filenames containing quotes,
+  // apostrophes or HTML characters cannot break the markup.
+  const list = document.getElementById('file-list');
+  const ext  = file.name.split('.').pop().toLowerCase();
+  const chip = document.createElement('div');
+  chip.className = 'file-chip';
+  chip.dataset.name = file.name;
+
+  const extSpan = document.createElement('span');
+  extSpan.className = 'chip-ext';
+  extSpan.textContent = ext;
+
+  const nameSpan = document.createElement('span');
+  nameSpan.textContent = file.name;
+
+  const removeBtn = document.createElement('button');
+  removeBtn.className = 'chip-remove';
+  removeBtn.title = 'Eltávolítás';
+  removeBtn.textContent = '✕';
+  removeBtn.addEventListener('click', () => removeFile(file.name));
+
+  chip.append(extSpan, nameSpan, removeBtn);
+  list.appendChild(chip);
+}
+
+function renderFileList() {
+  document.getElementById('file-list').innerHTML = '';
+  pendingFiles.forEach(renderFileChip);
+}
+
+function removeChip(name) {
+  document.querySelectorAll('.file-chip').forEach(c => {
+    if (c.dataset.name === name) c.remove();
+  });
+}
+
+function removeFile(name) {
+  const file = pendingFiles.find(f => f.name === name);
+  if (file) dz.removeFile(file);
+  removeChip(name);
+}
+
+function asText(msg) {
+  return typeof msg === 'object' ? (msg.error || JSON.stringify(msg)) : msg;
+}
+
+/* Dropzone rejects files one at a time; dropping 30 unsupported files used to
+   mean 30 alert() boxes. Collect them and show a single summary. */
+let rejectTimer = null;
+function scheduleRejectionAlert() {
+  clearTimeout(rejectTimer);
+  rejectTimer = setTimeout(() => {
+    if (!rejectedMsgs.length) return;
+    alert('Ez a ' + rejectedMsgs.length + ' fájl NEM került a sorba:\n\n'
+          + rejectedMsgs.join('\n')
+          + '\n\nEgy esethez legfeljebb ' + MAX_FILES_PER_CASE + ' fájl tölthető fel.');
+    rejectedMsgs = [];
+  }, 150);
+}
+
+function updateButton() {
+  const btn = document.getElementById('btn-process');
+  btn.disabled = pendingFiles.length === 0;
+  btn.textContent = 'Feldolgozás indítása →';
+}
+
+/* ── Process button ───────────────────────────────────────────────── */
+document.getElementById('btn-process').addEventListener('click', () => {
+  if (pendingFiles.length === 0) return;
+  const btn = document.getElementById('btn-process');
+  btn.disabled = true;
+  btn.textContent = 'Feltöltés…';
+  dz.processQueue();
+});
+
+/* ── Job card management ──────────────────────────────────────────── */
+function addJobCard(jobId, caseId) {
+  // Hide empty state
+  document.getElementById('empty-state').style.display = 'none';
+
+  const list = document.getElementById('jobs-list');
+  const card = document.createElement('div');
+  card.className = 'job-card';
+  card.id = `job-${jobId}`;
+  card.innerHTML = buildCardHTML(jobId, caseId, 'QUEUED', 0, 'Várakozás…', null);
+  list.insertBefore(card, list.firstChild);
+
+  const timer = setInterval(() => pollJob(jobId, caseId, card), 1500);
+  activeJobs.set(jobId, { card, timer, sawRunning: false });
+}
+
+function buildCardHTML(jobId, caseId, status, progress, step, error, state) {
+  const statusLower = status.toLowerCase();
+  const isDone      = status === 'DONE';
+  const isFailed    = status === 'FAILED';
+  const fillClass   = isDone ? 'done-fill' : isFailed ? 'error-fill' : '';
+
+  const badge = `
+    <span class="status-badge ${statusLower}">
+      <span class="badge-dot"></span>
+      ${statusLabel(status)}
+    </span>`;
+
+  const errorHtml = error ? `<div class="error-box">${escHtml(error)}</div>` : '';
+
+  const resultHtml = isDone ? buildResultHTML(state || {}) : '';
+
+  return `
+    <div class="job-header">
+      <div class="job-ids">
+        <div class="job-case">Eset: ${escHtml(caseId)}</div>
+        <div class="job-id-mono">job_id: ${jobId}</div>
+      </div>
+      ${badge}
+    </div>
+    <div class="progress-wrap">
+      <div class="progress-fill ${fillClass}" style="width:${progress}%"></div>
+    </div>
+    <div class="step-label">${escHtml(step || '')}</div>
+    ${errorHtml}
+    ${resultHtml}`;
+}
+
+/* The files are already on the user's own disk — show where, instead of
+   offering a download that would make a second copy of patient data. */
+function buildResultHTML(state) {
+  const outPath = state.out_path || '';
+  if (!outPath) {
+    return `
+      <div class="result-box">
+        <div class="result-label">✔ Kész</div>
+        <span class="result-path">Az eredmények a beállított mappába kerültek.</span>
+      </div>`;
+  }
+
+  const zipLine = state.zip_path
+    ? `<div class="result-zip">ZIP: ${escHtml(state.zip_path)}</div>` : '';
+  const zipWarn = state.zip_error
+    ? `<div class="result-zip warn">A ZIP nem készült el: ${escHtml(state.zip_error)}</div>` : '';
+
+  return `
+    <div class="result-box">
+      <div class="result-label">✔ Az eredmények elmentve ide</div>
+      <span class="result-path">${escHtml(outPath)}</span>
+      ${zipLine}
+      ${zipWarn}
+      <button type="button" class="btn-copy-path" data-path="${escHtml(outPath)}">
+        Útvonal másolása
+      </button>
+    </div>`;
+}
+
+/* Delegated: a card's innerHTML is rebuilt on every poll, so per-button
+   listeners would not survive. */
+document.getElementById('jobs-list').addEventListener('click', async ev => {
+  const btn = ev.target.closest('.btn-copy-path');
+  if (!btn) return;
+  try {
+    await navigator.clipboard.writeText(btn.dataset.path || '');
+    btn.textContent = 'Másolva ✓';
+  } catch {
+    btn.textContent = 'A másolás nem sikerült';
+  }
+  setTimeout(() => { btn.textContent = 'Útvonal másolása'; }, 1800);
+});
+
+function statusLabel(s) {
+  const labels = {
+    QUEUED:'Várakozik', INGESTING:'Beolvasás', ROUTING:'Besorolás',
+    ANCHORING:'Horgonyzás', EXTRACTING:'Kinyerés', MERGING:'Összesítés',
+    EXPORTING:'Exportálás', DONE:'Kész', FAILED:'Hiba', Unknown:'Ismeretlen'
+  };
+  return labels[s] || s;
+}
+
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+/* ── Polling ──────────────────────────────────────────────────────── */
+async function pollJob(jobId, caseId, card) {
+  try {
+    const resp  = await fetch(`/status/${jobId}`);
+    const data  = await resp.json();
+    const { status, progress, step, error } = data;
+
+    // Update card classes for border color
+    card.classList.remove('is-done', 'is-failed');
+    if (status === 'DONE')   card.classList.add('is-done');
+    if (status === 'FAILED') card.classList.add('is-failed');
+
+    card.innerHTML = buildCardHTML(jobId, caseId, status, progress, step, error, data);
+
+    // Stop polling when terminal
+    if (status === 'DONE' || status === 'FAILED') {
+      const job = activeJobs.get(jobId);
+      if (job) clearInterval(job.timer);
+      activeJobs.delete(jobId);
+      // The card carries the "saved here" path — make sure it is on screen
+      // even if the user scrolled away while the case was processing. Only
+      // for a job we actually watched finish, so restoring a page full of
+      // old jobs does not yank the view around.
+      if (job && job.sawRunning) {
+        card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    } else {
+      const job = activeJobs.get(jobId);
+      if (job) job.sawRunning = true;
+    }
+  } catch (e) {
+    console.warn('Poll error for', jobId, e);
+  }
+}
+
+/* ── Password modal ──────────────────────────────────────────────── */
+let pendingUnlockCaseId = null;
+
+function showPasswordModal(caseId, protectedFiles) {
+  pendingUnlockCaseId = caseId;
+  const desc = document.getElementById('pw-modal-desc');
+  const names = protectedFiles.map(f => `<strong>${escHtml(f)}</strong>`).join(', ');
+  desc.innerHTML = `Titkosított fájl: ${names}<br>Kérjük adja meg a jelszót a feldolgozáshoz.`;
+  document.getElementById('pw-input').value = '';
+  document.getElementById('pw-error').textContent = '';
+  document.getElementById('pw-modal').classList.add('visible');
+  setTimeout(() => document.getElementById('pw-input').focus(), 50);
+}
+
+function hidePasswordModal() {
+  document.getElementById('pw-modal').classList.remove('visible');
+  pendingUnlockCaseId = null;
+}
+
+document.getElementById('pw-cancel').addEventListener('click', hidePasswordModal);
+
+document.getElementById('pw-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') submitPassword();
+});
+
+document.getElementById('pw-submit').addEventListener('click', submitPassword);
+
+async function submitPassword() {
+  const password = document.getElementById('pw-input').value;
+  if (!password || !pendingUnlockCaseId) return;
+
+  const submitBtn = document.getElementById('pw-submit');
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Feloldás\u2026';
+  document.getElementById('pw-error').textContent = '';
+
+  try {
+    const resp = await fetch('/upload/unlock', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        case_id: pendingUnlockCaseId,
+        password: password,
+        dest_dir: destValue(),
+        make_zip: zipToggle.checked,
+        use_llm: llmToggle.checked,
+        csv_format: csvSelect.value,
+      }),
+    });
+    const data = await resp.json();
+
+    if (resp.ok && data.job_id) {
+      hidePasswordModal();
+      addJobCard(data.job_id, data.case_id);
+    } else {
+      document.getElementById('pw-error').textContent =
+        data.error || 'Ismeretlen hiba.';
+    }
+  } catch (e) {
+    document.getElementById('pw-error').textContent =
+      'Hálózati hiba. Próbálja újra.';
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Feloldás';
+  }
+}
+
+/* ── Restore jobs from sessionStorage on page reload ─────────────── */
+(function restoreJobs() {
+  let saved = [];
+  try { saved = JSON.parse(sessionStorage.getItem('crreg_jobs') || '[]'); } catch {}
+  saved.forEach(({ jobId, caseId }) => addJobCard(jobId, caseId));
+})();
+
+/* ── Persist jobs to sessionStorage whenever a new job is added ──── */
+const _origAdd = addJobCard;
+window.addJobCard = function(jobId, caseId) {
+  let saved = [];
+  try { saved = JSON.parse(sessionStorage.getItem('crreg_jobs') || '[]'); } catch {}
+  if (!saved.find(j => j.jobId === jobId)) {
+    saved.push({ jobId, caseId });
+    sessionStorage.setItem('crreg_jobs', JSON.stringify(saved));
+  }
+  _origAdd(jobId, caseId);
+};
+</script>
+
+</body>
+</html>

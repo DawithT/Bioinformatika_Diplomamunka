@@ -1,0 +1,24 @@
+.env
+
+__pycache__/
+*.pyc
+
+.venv/
+venv/
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+
+# testing
+data/
+tests/
+
+# checks
+pylintrc
+pyrightconfig.json
+pytest-cache-files*/
+.pytest_cache/
+

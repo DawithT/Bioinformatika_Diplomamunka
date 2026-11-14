@@ -1,0 +1,11 @@
+.git
+.pytest_cache
+__pycache__
+**/__pycache__
+*.pyc
+data/uploads/*
+data/out/*
+data/jobs/*
+data/cache/*
+tests/fixtures/*.pdf
+.env
